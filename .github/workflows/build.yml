@@ -25,3 +25,4 @@ jobs:
       with:
         name: zygisk-il2cppdumper
         path: out/magisk_module_release/
+# trigger workflow re-index 2026-01-28T19:12:56Z
