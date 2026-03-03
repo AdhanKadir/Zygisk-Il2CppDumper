@@ -12,6 +12,8 @@
 #include <sstream>
 #include <fstream>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <errno.h>
 #include "xdl.h"
 #include "log.h"
 #include "il2cpp-tabledefs.h"
@@ -335,9 +337,21 @@ void il2cpp_api_init(void *handle) {
         LOGE("Failed to initialize il2cpp api.");
         return;
     }
-    while (!il2cpp_is_vm_thread(nullptr)) {
-        LOGI("Waiting for il2cpp_init...");
-        sleep(1);
+    // Guard against null function pointer before calling
+    if (il2cpp_is_vm_thread) {
+        int wait_count = 0;
+        while (!il2cpp_is_vm_thread(nullptr)) {
+            LOGI("Waiting for il2cpp_init... (%d)", wait_count);
+            sleep(1);
+            wait_count++;
+            if (wait_count > 60) {
+                LOGE("il2cpp_init timeout after 60s, proceeding anyway");
+                break;
+            }
+        }
+    } else {
+        LOGW("il2cpp_is_vm_thread not found, skipping wait");
+        sleep(3);
     }
     auto domain = il2cpp_domain_get();
     il2cpp_thread_attach(domain);
@@ -417,13 +431,21 @@ void il2cpp_dump(const char *outDir) {
         }
     }
     LOGI("write dump file");
-    auto outPath = std::string(outDir).append("/files/dump.cs");
+    // Ensure /files/ directory exists
+    auto filesDir = std::string(outDir).append("/files");
+    mkdir(filesDir.c_str(), 0777);
+    auto outPath = filesDir.append("/dump.cs");
+    LOGI("output path: %s", outPath.c_str());
     std::ofstream outStream(outPath);
+    if (!outStream.is_open()) {
+        LOGE("failed to open output file: %s (errno=%d)", outPath.c_str(), errno);
+        return;
+    }
     outStream << imageOutput.str();
     auto count = outPuts.size();
     for (int i = 0; i < count; ++i) {
         outStream << outPuts[i];
     }
     outStream.close();
-    LOGI("dump done!");
+    LOGI("dump done! total classes: %zu", count);
 }

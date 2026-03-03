@@ -19,19 +19,26 @@
 
 void hack_start(const char *game_data_dir) {
     bool load = false;
-    for (int i = 0; i < 10; i++) {
+    // Increase retry to 30 attempts (30 seconds) to give large games time to load libil2cpp.so
+    for (int i = 0; i < 30; i++) {
         void *handle = xdl_open("libil2cpp.so", 0);
+        if (!handle) {
+            // Fallback: try dlopen if xdl_open fails
+            handle = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+        }
         if (handle) {
+            LOGI("libil2cpp.so found at attempt %d", i + 1);
             load = true;
             il2cpp_api_init(handle);
             il2cpp_dump(game_data_dir);
             break;
         } else {
+            LOGI("libil2cpp.so not ready, retry %d/30", i + 1);
             sleep(1);
         }
     }
     if (!load) {
-        LOGI("libil2cpp.so not found in thread %d", gettid());
+        LOGI("libil2cpp.so not found in thread %d after 30 attempts", gettid());
     }
 }
 
@@ -190,6 +197,9 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
     LOGI("hack thread: %d", gettid());
     int api_level = android_get_device_api_level();
     LOGI("api level: %d", api_level);
+    // Wait for game to fully initialize before attempting dump
+    LOGI("waiting for game initialization...");
+    sleep(5);
 
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
