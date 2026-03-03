@@ -431,15 +431,35 @@ void il2cpp_dump(const char *outDir) {
         }
     }
     LOGI("write dump file");
-    // Ensure /files/ directory exists
+    // Ensure output directory exists (try both outDir directly and outDir/files)
     auto filesDir = std::string(outDir).append("/files");
-    mkdir(filesDir.c_str(), 0777);
+    // Create parent dir first
+    mkdir(outDir, 0777);
+    chmod(outDir, 0777);
+    int mkret = mkdir(filesDir.c_str(), 0777);
+    if (mkret != 0 && errno != EEXIST) {
+        LOGE("mkdir failed for %s (errno=%d), trying outDir directly", filesDir.c_str(), errno);
+        // Fallback: write directly to outDir
+        filesDir = std::string(outDir);
+    } else {
+        chmod(filesDir.c_str(), 0777);
+    }
     auto outPath = filesDir.append("/dump.cs");
     LOGI("output path: %s", outPath.c_str());
+    // Remove existing dump file if present
+    remove(outPath.c_str());
     std::ofstream outStream(outPath);
     if (!outStream.is_open()) {
         LOGE("failed to open output file: %s (errno=%d)", outPath.c_str(), errno);
-        return;
+        // Try /data/local/tmp as last resort
+        auto fallbackPath = std::string("/data/local/tmp/dump.cs");
+        LOGI("trying fallback path: %s", fallbackPath.c_str());
+        outStream.open(fallbackPath);
+        if (!outStream.is_open()) {
+            LOGE("fallback also failed (errno=%d)", errno);
+            return;
+        }
+        LOGI("writing to fallback path: %s", fallbackPath.c_str());
     }
     outStream << imageOutput.str();
     auto count = outPuts.size();
@@ -447,5 +467,7 @@ void il2cpp_dump(const char *outDir) {
         outStream << outPuts[i];
     }
     outStream.close();
+    chmod(outPath.c_str(), 0666);
     LOGI("dump done! total classes: %zu", count);
+    LOGI("dump.cs saved to: %s", outPath.c_str());
 }

@@ -17,15 +17,52 @@
 #include <linux/unistd.h>
 #include <array>
 
+static void *find_il2cpp_handle() {
+    // Method 1: xdl_open by name
+    void *handle = xdl_open("libil2cpp.so", 0);
+    if (handle) {
+        LOGI("libil2cpp.so found via xdl_open");
+        return handle;
+    }
+    // Method 2: dlopen NOLOAD (already mapped)
+    handle = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
+    if (handle) {
+        LOGI("libil2cpp.so found via dlopen NOLOAD");
+        return handle;
+    }
+    // Method 3: scan /proc/self/maps for libil2cpp.so path and dlopen it
+    FILE *maps = fopen("/proc/self/maps", "r");
+    if (maps) {
+        char line[512];
+        while (fgets(line, sizeof(line), maps)) {
+            if (strstr(line, "libil2cpp.so")) {
+                // Extract path from maps line
+                char *path = strchr(line, '/');
+                if (path) {
+                    // Remove trailing newline
+                    path[strcspn(path, "\n")] = '\0';
+                    LOGI("Found libil2cpp.so in maps: %s", path);
+                    handle = dlopen(path, RTLD_NOW | RTLD_NOLOAD);
+                    if (!handle) handle = xdl_open(path, 0);
+                    if (handle) {
+                        LOGI("libil2cpp.so opened from maps path");
+                        fclose(maps);
+                        return handle;
+                    }
+                }
+                break;
+            }
+        }
+        fclose(maps);
+    }
+    return nullptr;
+}
+
 void hack_start(const char *game_data_dir) {
     bool load = false;
-    // Increase retry to 30 attempts (30 seconds) to give large games time to load libil2cpp.so
-    for (int i = 0; i < 30; i++) {
-        void *handle = xdl_open("libil2cpp.so", 0);
-        if (!handle) {
-            // Fallback: try dlopen if xdl_open fails
-            handle = dlopen("libil2cpp.so", RTLD_NOW | RTLD_NOLOAD);
-        }
+    // Try up to 60 attempts (60 seconds) to find libil2cpp.so
+    for (int i = 0; i < 60; i++) {
+        void *handle = find_il2cpp_handle();
         if (handle) {
             LOGI("libil2cpp.so found at attempt %d", i + 1);
             load = true;
@@ -33,12 +70,12 @@ void hack_start(const char *game_data_dir) {
             il2cpp_dump(game_data_dir);
             break;
         } else {
-            LOGI("libil2cpp.so not ready, retry %d/30", i + 1);
+            LOGI("libil2cpp.so not ready, retry %d/60", i + 1);
             sleep(1);
         }
     }
     if (!load) {
-        LOGI("libil2cpp.so not found in thread %d after 30 attempts", gettid());
+        LOGI("libil2cpp.so not found in thread %d after 60 attempts", gettid());
     }
 }
 
@@ -197,9 +234,10 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
     LOGI("hack thread: %d", gettid());
     int api_level = android_get_device_api_level();
     LOGI("api level: %d", api_level);
-    // Wait for game to fully initialize before attempting dump
+    LOGI("game_data_dir: %s", game_data_dir);
+    // Short initial wait for process to stabilize
     LOGI("waiting for game initialization...");
-    sleep(5);
+    sleep(2);
 
 #if defined(__i386__) || defined(__x86_64__)
     if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
